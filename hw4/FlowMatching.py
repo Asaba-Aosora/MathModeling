@@ -27,6 +27,29 @@ def save_img(tensor, img_path, origin_size=None):
 
     img.save(img_path)
 
+class ConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, time_dim):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1),
+            nn.ReLU()
+        )
+        self.time_proj = nn.Sequential(
+            nn.Linear(time_dim, out_ch),
+            nn.ReLU()
+        )
+        if in_ch < out_ch:
+            self.down = nn.Conv2d(out_ch, out_ch, 2, stride=2)
+        else:
+            self.down = nn.Identity()
+
+    def forward(self, x, t_emb):
+        conv_out = self.conv(x) + self.time_proj(t_emb).unsqueeze(-1).unsqueeze(-1)
+        return conv_out, self.down(conv_out)
+
+
 class FlowUNet(nn.Module):
     def __init__(self, in_ch=3, time_dim=32):
         super().__init__()
@@ -35,39 +58,18 @@ class FlowUNet(nn.Module):
             nn.ReLU(),
             nn.Linear(time_dim, time_dim)
         )
-        self.down1 = self._conv_block(in_ch, 64, time_dim)
-        self.down2 = self._conv_block(64, 128, time_dim)
+        self.down1 = ConvBlock(in_ch, 64, time_dim)
+        self.down2 = ConvBlock(64, 128, time_dim)
         self.bottleneck = nn.Sequential(
             nn.Conv2d(128, 256, 3, padding=1),
             nn.ReLU(),
             nn.Conv2d(256, 256, 3, padding=1),
             nn.ReLU()
         )
-        self.up2 = self._conv_block(256 + 128, 128, time_dim)
-        self.up1 = self._conv_block(128 + 64, 64, time_dim)
+        self.up2 = ConvBlock(256 + 128, 128, time_dim)
+        self.up1 = ConvBlock(128 + 64, 64, time_dim)
         self.out = nn.Conv2d(64, in_ch, 3, 1, padding=1)
 
-    def _conv_block(self, in_ch, out_ch, time_dim):
-        conv = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1),
-            nn.ReLU()
-        )
-        time_proj = nn.Sequential(
-            nn.Linear(time_dim, out_ch),
-            nn.ReLU()
-        )
-        if in_ch < out_ch:
-            down = nn.Conv2d(out_ch, out_ch, 2, stride=2)
-        else:
-            down = nn.Identity()
-
-        def forward(x, t_emb):
-            conv_out = conv(x) + time_proj(t_emb).unsqueeze(-1).unsqueeze(-1)
-            return conv_out, down(conv_out)
-        
-        return forward
     
     def forward(self, x, t):
         t_emb = self.time_emb(t)
