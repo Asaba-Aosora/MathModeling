@@ -23,7 +23,7 @@ def save_img(tensor, img_path, origin_size=None):
     img = T.ToPILImage()(tensor.squeeze(0))
 
     if origin_size is not None:
-        img = img.resize(origin_size, Image.Resampling.BILINEAR)
+        img = img.resize(origin_size, Image.Resampling.LANCZOS)
 
     img.save(img_path)
 
