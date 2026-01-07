@@ -7,19 +7,24 @@ import os
 
 def load_img(img_path, target_size):
     img = Image.open(img_path).convert('RGB')
+    origin_size = img.size
     trans = T.Compose([
         T.Resize(target_size),
         T.ToTensor(),
         T.Normalize(0.5, 0.5)   # [0, 1] -> [-1, 1]
     ])
     tensor = trans(img).unsqueeze(0)
-    return tensor
+    return tensor, origin_size
 
 
-def save_img(tensor, img_path):
+def save_img(tensor, img_path, origin_size=None):
     tensor = (tensor + 1) / 2  # [-1, 1] -> [0, 1]
     tensor = torch.clamp(tensor, 0, 1)
     img = T.ToPILImage()(tensor.squeeze(0))
+
+    if origin_size is not None:
+        img = img.resize(origin_size, Image.Resampling.BILINEAR)
+
     img.save(img_path)
 
 class FlowUNet(nn.Module):
@@ -77,7 +82,15 @@ class FlowUNet(nn.Module):
         return out
 
 def infer(model, x_init, t_start, t_end, device, num_steps=100):
-    pass
+    model.eval()
+    x = x_init.to(device)
+    dt = (t_end - t_start) / num_steps
+    with torch.no_grad():
+        for i in range(num_steps):
+            t_curr = torch.tensor([[t_start + i * dt]], device=device)
+            v_pred = model(x, t_curr)
+            x = x + v_pred * dt
+    return x
 
 def main():
     # 设置参数
@@ -89,15 +102,17 @@ def main():
     test_input_result_img_path = 'test_input_result.png'
     test_output_result_img_path = 'test_output_result.png'
     target_size = (256, 256)
-    epochs = 10
+    epochs = 1000
     lr = 1e-4
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 加载图像
-    x0 = load_img(input_img_path, target_size).to(device)
-    x1 = load_img(output_img_path, target_size).to(device)
-    test_x0 = load_img(test_input_img_path, target_size)
-    test_x1 = load_img(test_output_img_path, target_size)
+    x0, _ = load_img(input_img_path, target_size)
+    x1, _ = load_img(output_img_path, target_size)
+    x0 = x0.to(device)
+    x1 = x1.to(device)
+    test_x0, test_x0_origin_size = load_img(test_input_img_path, target_size)
+    test_x1, test_x1_origin_size = load_img(test_output_img_path, target_size)
 
 
     # 初始化模型
@@ -131,8 +146,8 @@ def main():
     output_result = infer(model, test_x1, t_start=1.0, t_end=0.0, device=device)
 
     # 保存结果
-    save_img(input_result, test_input_result_img_path)
-    save_img(output_result, test_output_result_img_path)
+    save_img(input_result, test_input_result_img_path, test_x0_origin_size)
+    save_img(output_result, test_output_result_img_path, test_x1_origin_size)
 
 
 if __name__ == '__main__':
